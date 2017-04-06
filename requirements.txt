@@ -1,0 +1,2 @@
+python-lzo>=1.11
+crcmod>=1.7
