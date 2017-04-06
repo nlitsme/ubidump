@@ -44,13 +44,14 @@ class UbiEcHeader:
                 self.data_ofs, self.image_seq)
 
 
+VTBL_VOLID=0x7fffefff
 class UbiVidHead:
     """
     The volume id header
     """
     hdrsize = 16*4
     def __init__(self):
-        self.vol_id = 0x7fffefff
+        self.vol_id = VTBL_VOLID
     def parse(self, data):
         self.magic, self.version, self.vol_type, self.copy_flag, self.compat, self.vol_id, \
                 self.lnum, self.data_size, self.used_ebs, self.data_pad, self.data_crc, \
@@ -100,22 +101,22 @@ class UbiVolume:
     """
     provides read access to a specific volume in an UBI image.
     """
-    def __init__(self, blks, volid):
+    def __init__(self, blks, volid, dataofs):
         self.blks = blks
         self.volid = volid
+        self.dataofs = dataofs
 
     def read(self, lnum, offs, size):
-        # todo: instead of hardcoding 0x2000, use the UbiEcHeader.data_ofs field.
-        return self.blks.readvolume(self.volid, lnum, 0x2000+offs, size)
+        return self.blks.readvolume(self.volid, lnum, self.dataofs+offs, size)
 
 
 class UbiBlocks:
     """
     Block level access to an UBI image.
     """
-    def __init__(self, fh):
+    def __init__(self, fh, blocksize):
         self.fh = fh
-        self.lebsize = 0x40000
+        self.lebsize = blocksize
 
         fh.seek(0, 2)
         self.filesize = fh.tell()
@@ -123,10 +124,10 @@ class UbiBlocks:
 
         self.scanblocks()
 
-        if not 0x7fffefff in self.vmap:
+        if not VTBL_VOLID in self.vmap:
             print("no volume directory, %d physical volumes" % len(self.vmap))
             return
-        self.scanvtbls(self.vmap[0x7fffefff][0])
+        self.scanvtbls(self.vmap[VTBL_VOLID][0])
 
         print("%d named volumes found, %d physical volumes" % (len(self.vbyname), len(self.vmap)))
 
@@ -174,7 +175,7 @@ class UbiBlocks:
             self.vtbl = []
             self.vbyname = dict()
 
-            if vid.vol_id == 0x7fffefff:
+            if vid.vol_id == VTBL_VOLID:
                 for i in range(128):
                     vrec = UbiVtblRecord()
                     vrecdata = self.readblock(lnum, self.ec.data_ofs + i * vrec.hdrsize, vrec.hdrsize)
@@ -208,7 +209,7 @@ class UbiBlocks:
         return self.vtbl[volid]
 
     def getvolume(self, volid):
-        return UbiVolume(self, volid)
+        return UbiVolume(self, volid, self.ec.data_ofs)
 
     def readvolume(self, volid, lnum, offs, size):
         physlnum = self.vmap[volid].get(lnum, None)
@@ -540,9 +541,20 @@ class UbiFsOrphan:
 
 class UbiFsCommonHeader:
     hdrsize = 16+8
-    _classmap = [ UbiFsInode, UbiFsData, UbiFsDirEntry, UbiFsExtendedAttribute,
-            UbiFsTruncation, UbiFsPadding, UbiFsSuperblock, UbiFsMaster, UbiFsLEBReference,
-            UbiFsIndex, UbiFsCommitStart, UbiFsOrphan ]
+    _classmap = [
+            UbiFsInode,                 #  0
+            UbiFsData,                  #  1
+            UbiFsDirEntry,              #  2
+            UbiFsExtendedAttribute,     #  3
+            UbiFsTruncation,            #  4
+            UbiFsPadding,               #  5
+            UbiFsSuperblock,            #  6
+            UbiFsMaster,                #  7
+            UbiFsLEBReference,          #  8
+            UbiFsIndex,                 #  9
+            UbiFsCommitStart,           # 10
+            UbiFsOrphan,                # 11
+    ]
     def __init__(self):
         pass
     def parse(self, data):
@@ -583,7 +595,7 @@ class UbiFs:
         while True:
             try:
                 mst = self.readnode(1, o)
-                o += 0x1000
+                o += 0x1000   # Fixed value ... do i need to configure this somewhere?
             except:
                 return mst
 
@@ -764,12 +776,20 @@ class UbiFs:
         startkey = (inum, 1, 0)
         endkey = (inum, 2, 0)
         c = self.find('ge', startkey)
+
+        savedlen = 0
         while not c.eof() and c.getkey() < endkey:
             dat = c.getnode()
 
             fh.write(dat.data)
+            savedlen += len(dat.data)
 
             c.next()
+
+        c = self.find('eq', (inum, 0, 0))
+        inode = c.getnode()
+        if inode.size!=savedlen:
+            print("WARNING: found %d bytes for inode %05d, which should have %d bytes" % (savedlen, inum, inode.size))
 
     def findfile(self, path, inum = 1):
         """
@@ -820,7 +840,7 @@ def processfile(fn, args):
     Perform actions specified by `args` on the ubi image in the file `fn`
     """
     with open(fn, "rb") as fh:
-        blks = UbiBlocks(fh)
+        blks = UbiBlocks(fh, args.blocksize)
         if args.verbose:
             print("===== block =====")
             blks.dumpvtbl()
@@ -878,11 +898,14 @@ def main():
     parser = argparse.ArgumentParser(description='UBIFS dumper.')
     parser.add_argument('--savedir', '-s',  type=str, help="save files in all volumes to the specified directory", metavar='DIRECTORY')
     parser.add_argument('--cat', '-c',  type=str, help="extract a single file to stdout", metavar='FILE')
+    parser.add_argument('--blocksize', '-b',  type=str, help="Specify an alternative blocksize", default='0x40000')
     parser.add_argument('--listfiles', '-l',  action='store_true', help="list directory contents")
     parser.add_argument('--dumptree', '-d',  action='store_true', help="dump the filesystem b-tree contents")
     parser.add_argument('--verbose', '-v',  action='store_true', help="print extra info")
     parser.add_argument('FILES',  type=str, nargs='+', help="list of ubi images to use")
     args = parser.parse_args()
+
+    args.blocksize = int(args.blocksize, 0)
 
     for fn in args.FILES:
         print("==>", fn, "<==")
