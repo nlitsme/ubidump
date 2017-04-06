@@ -56,6 +56,8 @@ TODO
  * parse the journal
  * analyze b-tree structure for unused nodes
  * analyze fs structure for unused inodes, dirents
+ * verify that data block size equals the size mentioned in the inode.
+ * automatically determine blocksize
 
 Author
 ======
