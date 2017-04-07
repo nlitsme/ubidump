@@ -712,10 +712,17 @@ class UbiFs:
             return "[%s]" % (",".join(str(_[1]) for _ in self.stack))
 
         def getkey(self):
+            """
+            Returns the key tuple for the current item
+            """
             if self.stack:
                 page, ix = self.stack[-1]
                 return unpackkey(page.branches[ix].key)
         def getnode(self):
+            """
+            Returns the node object for the current item
+            """
+            if self.stack:
             if self.stack:
                 page, ix = self.stack[-1]
                 return self.fs.readnode(page.branches[ix].lnum, page.branches[ix].offs)
@@ -742,6 +749,7 @@ class UbiFs:
             raise Exception("tree too deep")
 
         cursor = self.Cursor(self, stack)
+
         """
         act                  rel:  | lt       le      eq        ge       gt
         (lt, 0)  key < 0           | None     None   None      pass     pass
@@ -937,4 +945,5 @@ def main():
                 traceback.print_exc()
 
 
-main()
+if __name__ == '__main__':
+    main()
