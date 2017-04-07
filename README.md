@@ -25,6 +25,18 @@ A volume contains a b-tree database with keys for:
 
 The inodes are basically a standard unix filesystem, with direntries, regular files, symlinks, devices, etc.
 
+mounting images on linux
+------------------------
+
+    modprobe nandsim first_id_byte=0x2c second_id_byte=0xac third_id_byte=0x90 fourth_id_byte=0x26
+    nandwrite /dev/mtd0   firmware-image.ubi 
+    modprobe ubi mtd=/dev/mtd0,4096
+    mount -t ubifs  -o ro /dev/ubi0_0 mnt
+
+This will mount a ubi image for a device with eraseblock size 0x40000.
+If your image has a blocksize of 0x20000, use `fourth_id_byte=0x15`, and specify a pagesize of `2048`
+with the second modprobe line.
+
 Usage
 =====
 
@@ -57,7 +69,20 @@ TODO
  * analyze b-tree structure for unused nodes
  * analyze fs structure for unused inodes, dirents
  * verify that data block size equals the size mentioned in the inode.
- * automatically determine blocksize
+
+References
+==========
+
+ * the ubifs/mtd tools http://linux-mtd.infradead.org/
+ * git repos can be found [here](http://git.infradead.org/)
+
+Similar tools
+=============
+
+ * another python tool  [on github](https://github.com/jrspruitt/ubi_reader/)
+     * does not support listing files.
+ * a closed source windows tool [here](http://ubidump.oozoon.de/)
+ * ubi-utils/ubidump.c [on the mtd mailinglist](http://lists.infradead.org/pipermail/linux-mtd/2014-July/054547.html)
 
 Author
 ======
