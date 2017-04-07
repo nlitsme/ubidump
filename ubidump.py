@@ -723,7 +723,6 @@ class UbiFs:
             Returns the node object for the current item
             """
             if self.stack:
-            if self.stack:
                 page, ix = self.stack[-1]
                 return self.fs.readnode(page.branches[ix].lnum, page.branches[ix].offs)
 
