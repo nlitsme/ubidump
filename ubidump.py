@@ -114,9 +114,9 @@ class UbiBlocks:
     """
     Block level access to an UBI image.
     """
-    def __init__(self, fh, blocksize):
+    def __init__(self, fh):
         self.fh = fh
-        self.lebsize = blocksize
+        self.lebsize = self.find_blocksize()
 
         fh.seek(0, 2)
         self.filesize = fh.tell()
@@ -129,7 +129,19 @@ class UbiBlocks:
             return
         self.scanvtbls(self.vmap[VTBL_VOLID][0])
 
-        print("%d named volumes found, %d physical volumes" % (len(self.vbyname), len(self.vmap)))
+        print("%d named volumes found, %d physical volumes, blocksize=0x%x" % (len(self.vbyname), len(self.vmap), self.lebsize))
+
+    def find_blocksize(self):
+        self.fh.seek(0)
+        magic = self.fh.read(4)
+        if magic != b'UBI#':
+            raise Exception("not an UBI image")
+        for log_blocksize in range(10,20):
+            self.fh.seek(1<<log_blocksize)
+            magic = self.fh.read(4)
+            if magic == b'UBI#':
+                return 1<<log_blocksize
+        raise Exception("Could not determine UBI image blocksize")
 
     def scanblocks(self):
         """
@@ -277,9 +289,10 @@ def decompress(data, buflen, compr_type):
     else:
         raise Exception("unknown compression type")
 
+# the blocksize is a fixed value, independent of the underlying device.
+UBIFS_BLOCKSIZE = 4096
 
 ########### objects for the various node types ########### 
-
 class UbiFsInode:
     nodetype = 0
     hdrsize = 16 + 5*8 + 11*4 + 2*4 + 28
@@ -769,9 +782,11 @@ class UbiFs:
 
             c.next()
 
-    def savefile(self, inum, fh):
+    def savefile(self, inum, fh, ubiname):
         """
         save file data from inode `inum` to the filehandle `fh`.
+
+        the `ubiname` argument is not needed, except for printing useful error messages.
         """
         startkey = (inum, 1, 0)
         endkey = (inum, 2, 0)
@@ -780,6 +795,9 @@ class UbiFs:
         savedlen = 0
         while not c.eof() and c.getkey() < endkey:
             dat = c.getnode()
+            _, _, blocknum = c.getkey()
+
+            fh.seek(UBIFS_BLOCKSIZE * blocknum)
 
             fh.write(dat.data)
             savedlen += len(dat.data)
@@ -788,8 +806,12 @@ class UbiFs:
 
         c = self.find('eq', (inum, 0, 0))
         inode = c.getnode()
-        if inode.size!=savedlen:
-            print("WARNING: found %d bytes for inode %05d, which should have %d bytes" % (savedlen, inum, inode.size))
+        if savedlen > inode.size:
+            print("WARNING: found more (%d bytes) for inode %05d, than specified in the inode(%d bytes) -- %s" % (savedlen, inum, inode.size, ubiname))
+        elif savedlen < inode.size:
+            # padding file with zeros
+            fh.seek(inode.size)
+            fh.truncate(inode.size)
 
     def findfile(self, path, inum = 1):
         """
@@ -840,7 +862,7 @@ def processfile(fn, args):
     Perform actions specified by `args` on the ubi image in the file `fn`
     """
     with open(fn, "rb") as fh:
-        blks = UbiBlocks(fh, args.blocksize)
+        blks = UbiBlocks(fh)
         if args.verbose:
             print("===== block =====")
             blks.dumpvtbl()
@@ -867,7 +889,7 @@ def processfile(fn, args):
                             raise
 
                     with open(os.path.join(*[args.savedir, vrec.name] + path), "wb") as fh:
-                        fs.savefile(inum, fh)
+                        fs.savefile(inum, fh, os.path.join(path))
 
                     count += 1
                 print("saved %d files" % count)
@@ -891,21 +913,18 @@ def processfile(fn, args):
             if args.cat:
                 inum = fs.findfile(args.cat.lstrip('/').split('/'))
                 if inum:
-                    fs.savefile(inum, sys.stdout)
+                    fs.savefile(inum, sys.stdout, args.cat)
 
 
 def main():
     parser = argparse.ArgumentParser(description='UBIFS dumper.')
     parser.add_argument('--savedir', '-s',  type=str, help="save files in all volumes to the specified directory", metavar='DIRECTORY')
     parser.add_argument('--cat', '-c',  type=str, help="extract a single file to stdout", metavar='FILE')
-    parser.add_argument('--blocksize', '-b',  type=str, help="Specify an alternative blocksize", default='0x40000')
     parser.add_argument('--listfiles', '-l',  action='store_true', help="list directory contents")
     parser.add_argument('--dumptree', '-d',  action='store_true', help="dump the filesystem b-tree contents")
     parser.add_argument('--verbose', '-v',  action='store_true', help="print extra info")
     parser.add_argument('FILES',  type=str, nargs='+', help="list of ubi images to use")
     args = parser.parse_args()
-
-    args.blocksize = int(args.blocksize, 0)
 
     for fn in args.FILES:
         print("==>", fn, "<==")
