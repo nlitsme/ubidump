@@ -16,6 +16,16 @@ import datetime
 import sys
 from collections import defaultdict
 
+import pkg_resources
+
+dependencies = [
+    'python-lzo>=1.11',
+    'crcmod>=1.7'
+]
+
+pkg_resources.require(dependencies)
+
+
 if sys.version_info[0] == 3:
     def cmp(a,b):
         return (a>b) - (a<b)
@@ -912,11 +922,17 @@ def processfile(fn, args):
                         sizestr = str(inode.size)
 
                     if (inode.mode>>12) == 10:
-                        linkstr = " -> %s" % inode.data
+                        linkdata = inode.data
+                        if args.encoding:
+                            linkdata = linkdata.decode(args.encoding, 'ignore')
+                        linkstr = " -> %s" % linkdata
                     else:
                         linkstr = ""
 
-                    print("%s %2d %-5d %-5d %10s %s %s%s" % (modestring(inode.mode), inode.nlink, inode.uid, inode.gid, sizestr, timestring(inode.mtime_sec), "/".join(path), linkstr))
+                    filename = b"/".join(path)
+                    if args.encoding:
+                        filename = filename.decode(args.encoding, 'ignore')
+                    print("%s %2d %-5d %-5d %10s %s %s%s" % (modestring(inode.mode), inode.nlink, inode.uid, inode.gid, sizestr, timestring(inode.mtime_sec), filename, linkstr))
             if args.cat:
                 inum = fs.findfile(args.cat.lstrip('/').split('/'))
                 if inum:
@@ -930,6 +946,7 @@ def main():
     parser.add_argument('--listfiles', '-l',  action='store_true', help="list directory contents")
     parser.add_argument('--dumptree', '-d',  action='store_true', help="dump the filesystem b-tree contents")
     parser.add_argument('--verbose', '-v',  action='store_true', help="print extra info")
+    parser.add_argument('--encoding', '-e',  type=str, help="filename encoding, default=utf-8", default='utf-8')
     parser.add_argument('FILES',  type=str, nargs='+', help="list of ubi images to use")
     args = parser.parse_args()
 
