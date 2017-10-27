@@ -18,6 +18,14 @@ from collections import defaultdict
 
 import pkg_resources
 
+if sys.version_info[0] == 2:
+    stdin = sys.stdin
+    stdout = sys.stdout
+else:
+    stdin = sys.stdin.buffer
+    stdout = sys.stdout.buffer
+
+
 dependencies = [
     'python-lzo>=1.11',
     'crcmod>=1.7'
@@ -30,7 +38,59 @@ if sys.version_info[0] == 3:
     def cmp(a,b):
         return (a>b) - (a<b)
 
+# using crcmod to generate the correct crc function.
 crc32 = crcmod.predefined.mkPredefinedCrcFun('CrcJamCrc')
+
+
+class SeekableStdout:
+    """
+    Wrapper for stdout, which allows forward seeking.
+    """
+    def __init__(self):
+        self.pos = 0
+
+    def seek(self, newpos, whence=0):
+        if whence==0:
+            if newpos < self.pos:
+                print("WARNING: can't seek stdout backwards")
+                return -1
+            if newpos > self.pos:
+                self.seekforward(newpos - self.pos)
+            self.pos = newpos
+        elif whence==1:
+            if newpos < 0:
+                print("WARNING: can't seek stdout backwards")
+                return -1
+            if newpos > 0:
+                self.seekforward(newpos)
+            self.pos += newpos
+        else:
+            print("WARNING: can't seek stdout from EOF")
+            return -1
+
+    def seekforward(self, size):
+        """
+        Seek forward by writing NUL bytes.
+        """
+        sys.stdout.flush()
+        chunk = b"\x00" * 0x10000
+        while size > 0:
+            if len(chunk) > size:
+                chunk = chunk[:size]
+            stdout.write(chunk)
+            size -= len(chunk)
+
+    def write(self, data):
+        sys.stdout.flush()
+        stdout.write(data)
+        self.pos += len(data)
+
+    def truncate(self, size):
+        """
+        Ignore this.
+        """
+        pass
+
 
 ########### block level objects ############
 
@@ -933,16 +993,23 @@ def processfile(fn, args):
                     if args.encoding:
                         filename = filename.decode(args.encoding, 'ignore')
                     print("%s %2d %-5d %-5d %10s %s %s%s" % (modestring(inode.mode), inode.nlink, inode.uid, inode.gid, sizestr, timestring(inode.mtime_sec), filename, linkstr))
-            if args.cat:
-                inum = fs.findfile(args.cat.lstrip('/').split('/'))
+            for srcfile in args.cat:
+                if len(args.cat)>1:
+                    print("==>", srcfile, "<==")
+                inum = fs.findfile(srcfile.lstrip('/').split('/'))
                 if inum:
-                    fs.savefile(inum, sys.stdout, args.cat)
+                    fs.savefile(inum, SeekableStdout(), srcfile)
+                    if len(args.cat)>1:
+                        print()
+                else:
+                    print("Not found")
+
 
 
 def main():
     parser = argparse.ArgumentParser(description='UBIFS dumper.')
     parser.add_argument('--savedir', '-s',  type=str, help="save files in all volumes to the specified directory", metavar='DIRECTORY')
-    parser.add_argument('--cat', '-c',  type=str, help="extract a single file to stdout", metavar='FILE')
+    parser.add_argument('--cat', '-c',  type=str, action="append", help="extract a single file to stdout", metavar='FILE')
     parser.add_argument('--listfiles', '-l',  action='store_true', help="list directory contents")
     parser.add_argument('--dumptree', '-d',  action='store_true', help="dump the filesystem b-tree contents")
     parser.add_argument('--verbose', '-v',  action='store_true', help="print extra info")
