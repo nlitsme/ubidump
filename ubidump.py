@@ -287,7 +287,7 @@ def namehash(name):
 def unlzo(data, buflen):
     return lzo.decompress(data, False, buflen)
 def unzlib(data):
-    return zlib.decompress(data)
+    return zlib.decompress(data, -zlib.MAX_WBITS)
 
 def decompress(data, buflen, compr_type):
     if compr_type==0:
@@ -295,7 +295,7 @@ def decompress(data, buflen, compr_type):
     elif compr_type==1:
         return unlzo(data, buflen)
     elif compr_type==2:
-        return unzlib(buflen)
+        return unzlib(data)
     else:
         raise Exception("unknown compression type")
 
