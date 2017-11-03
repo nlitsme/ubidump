@@ -382,9 +382,9 @@ class UbiFsInode:
     def inodedata_repr(self):
         types = ["0", "FIFO", "CHAR", "3", "DIRENT", "5", "BLOCK", "7", "FILE", "9", "LINK", "11", "SOCK", "13", "14", "15"]
         typ = (self.mode>>12)&0xF
-        if typ in (2, 6):
-            return types[typ] + ":" + b2a_hex(self.data)
-        return types[typ] + ":" + self.data
+        if typ in (2, 6):  # CHAR or BLOCK
+            return types[typ] + ":" + b2a_hex(self.data).decode('ascii')
+        return types[typ] + ":%s" % self.data
 
     def __repr__(self):
         return "INODE: key=%s, sq=%04x, size=%5d, n=%3d, uid:gid=%d:%d, mode=%06o, fl=%x, dl=%3d, " \
@@ -956,17 +956,19 @@ def processfile(fn, args):
             if args.dumptree:
                 fs.printrecursive(fs.root)
             if args.savedir:
+                savedir = args.savedir.encode(args.encoding)
+
                 count = 0
                 for inum, path in fs.recursefiles(1, []):
                     try:
-                        os.makedirs(os.path.join(*[args.savedir, vrec.name] + path[:-1]))
+                        os.makedirs(os.path.join(*[savedir, vrec.name] + path[:-1]))
                     except OSError as e:
                         # be happy if someone already created the path
                         if e.errno != errno.EEXIST:
                             raise
 
-                    with open(os.path.join(*[args.savedir, vrec.name] + path), "wb") as fh:
-                        fs.savefile(inum, fh, os.path.join(path))
+                    with open(os.path.join(*[savedir, vrec.name] + path), "wb") as fh:
+                        fs.savefile(inum, fh, os.path.join(*path))
 
                     count += 1
                 print("saved %d files" % count)
@@ -1005,14 +1007,13 @@ def processfile(fn, args):
                     print("Not found")
 
 
-
 def main():
     parser = argparse.ArgumentParser(description='UBIFS dumper.')
     parser.add_argument('--savedir', '-s',  type=str, help="save files in all volumes to the specified directory", metavar='DIRECTORY')
-    parser.add_argument('--cat', '-c',  type=str, action="append", help="extract a single file to stdout", metavar='FILE')
+    parser.add_argument('--cat', '-c',  type=str, action="append", help="extract a single file to stdout", metavar='FILE', default=[])
     parser.add_argument('--listfiles', '-l',  action='store_true', help="list directory contents")
     parser.add_argument('--dumptree', '-d',  action='store_true', help="dump the filesystem b-tree contents")
-    parser.add_argument('--verbose', '-v',  action='store_true', help="print extra info")
+    parser.add_argument('--verbose', '-v',  action='count', help="print extra info")
     parser.add_argument('--encoding', '-e',  type=str, help="filename encoding, default=utf-8", default='utf-8')
     parser.add_argument('FILES',  type=str, nargs='+', help="list of ubi images to use")
     args = parser.parse_args()
