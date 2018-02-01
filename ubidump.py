@@ -180,6 +180,25 @@ class UbiVolume:
         return self.blks.readvolume(self.volid, lnum, self.dataofs+offs, size)
 
 
+class RawVolume:
+    """
+    provides read access to a raw data volume
+    """
+    def __init__(self, fh):
+        self.fh = fh
+        self.leb_size = self.find_block_size()
+    def read(self, lnum, offs, size):
+        self.fh.seek(lnum*self.leb_size+offs)
+        return self.fh.read(size)
+    def find_block_size(self):
+        self.fh.seek(0)
+        data = self.fh.read(0x200)
+        values = struct.unpack("<12L", data[:4*12])
+        if values[0] == 0x06101831 and values[5] == 6:
+            # is superblock
+            return values[9]
+
+
 class UbiBlocks:
     """
     Block level access to an UBI image.
@@ -199,7 +218,7 @@ class UbiBlocks:
             return
         self.scanvtbls(self.vmap[VTBL_VOLID][0])
 
-        print("%d named volumes found, %d physical volumes, blocksize=0x%x" % (len(self.vbyname), len(self.vmap), self.lebsize))
+        print("%d named volumes found, %d physical volumes, blocksize=0x%x" % (self.nr_named, len(self.vmap), self.lebsize))
 
     def find_blocksize(self):
         self.fh.seek(0)
@@ -255,7 +274,7 @@ class UbiBlocks:
             self.vid = vid
 
             self.vtbl = []
-            self.vbyname = dict()
+            self.nr_named = 0
 
             if vid.vol_id == VTBL_VOLID:
                 for i in range(128):
@@ -266,7 +285,7 @@ class UbiBlocks:
                     self.vtbl.append(vrec)
 
                     if not vrec.empty():
-                        self.vbyname[vrec.name] = i
+                        self.nr_named += 1
         except:
             print(ec)
             print("viddata:%s" % b2a_hex(viddata))
@@ -285,8 +304,9 @@ class UbiBlocks:
         for volid, lmap in self.vmap.items():
             print("volume %x : %d lebs" % (volid, len(lmap)))
 
-    def nr_volumes(self):
-        return len(self.vbyname)
+    def nr_named(self):
+        return self.nr_named
+
     def getvrec(self, volid):
         return self.vtbl[volid]
 
@@ -302,10 +322,15 @@ class UbiBlocks:
 
 ################ filesytem level objects ##################
 
+UBIFS_INO_KEY = 0
+UBIFS_DATA_KEY = 1
+UBIFS_DENT_KEY = 2
+UBIFS_XENT_KEY = 3
+
 """
 key format:  (inum, (type<<29) | value)
    
-key types: UBIFS_*_KEY, INO, DATA, DENT, XENT
+key types: UBIFS_*_KEY: INO, DATA, DENT, XENT
 
 inode:  <inum>  + 0
 dirent:  <inum>  + hash
@@ -392,6 +417,12 @@ class UbiFsInode:
                         self.size, self.nlink, self.uid, self.gid, self.mode, self.flags, self.data_len, 
                         self.xattr_cnt, self.xattr_size, self.xattr_names, self.compr_type,  self.inodedata_repr())
         # todo: self.atime_sec, self.ctime_sec, self.mtime_sec, self.atime_nsec, self.ctime_nsec, self.mtime_nsec, 
+    def atime(self):
+        return self.atime_sec + self.atime_nsec / 1000000000.0
+    def mtime(self):
+        return self.mtime_sec + self.mtime_nsec / 1000000000.0
+    def ctime(self):
+        return self.ctime_sec + self.ctime_nsec / 1000000000.0
 
 
 class UbiFsData:
@@ -665,16 +696,17 @@ class UbiFs:
 
     the filesystem consists of a b-tree containing inodes, direntry and data nodes.
     """
-    def __init__(self, vol):
+    def __init__(self, vol, masteroffset):
         """
         The constructor takes a UbiVolume object
         """
         self.vol = vol
 
-        self.load()
+        self.load(masteroffset)
 
     def find_most_recent_master(self):
         o = 0
+        mst = None
         while True:
             try:
                 mst = self.readnode(1, o)
@@ -682,9 +714,13 @@ class UbiFs:
             except:
                 return mst
 
-    def load(self):
+    def load(self, masteroffset):
         self.sb = self.readnode(0, 0)
-        self.mst = self.find_most_recent_master()
+        if masteroffset:
+            self.mst = self.readnode(*masteroffset)
+            print("using mst from %s, seq: %08x/%08x" % (masteroffset, self.mst.hdr.sqnum, self.mst.cmt_no))
+        else:
+            self.mst = self.find_most_recent_master()
 
         # todo: check that the 2nd master node matches the first.
         #mst2 = self.readnode(2, 0)
@@ -797,7 +833,7 @@ class UbiFs:
                 return self.fs.readnode(page.branches[ix].lnum, page.branches[ix].offs)
 
 
-    def find(self, rel, key):
+    def find(self, rel, key, root=None):
         """
         returns a cursor for the relation + key.
 
@@ -807,7 +843,8 @@ class UbiFs:
 
         """
         stack = []
-        page = self.root
+        page = self.root if root is None else root
+
         while len(stack)<32:
             act, ix = page.find(packkey(key))
             stack.append( (page, ix) )
@@ -840,13 +877,15 @@ class UbiFs:
         raise Exception("unexpected case")
 
 
-    def recursefiles(self, inum, path, filter = 1<<UbiFsDirEntry.TYPE_REGULAR):
+    def recursefiles(self, inum, path, filter = 1<<UbiFsDirEntry.TYPE_REGULAR, root=None):
         """
         Recursively yield all files below the directory with inode `inum`
         """
-        startkey = (inum, 2, 0)
-        endkey = (inum, 3, 0)
-        c = self.find('ge', startkey)
+        startkey = (inum, UBIFS_DENT_KEY, 0)
+        endkey = (inum, UBIFS_DENT_KEY+1, 0)
+        if root is None:
+            root = self.root
+        c = self.find('ge', startkey, root)
         while not c.eof() and c.getkey() < endkey:
             ent = c.getnode()
 
@@ -854,7 +893,7 @@ class UbiFs:
                 yield ent.inum, path + [ent.name]
             if ent.type==ent.TYPE_DIRECTORY:
                 # recurse into subdirs
-                for x in self.recursefiles(ent.inum, path + [ent.name], filter):
+                for x in self.recursefiles(ent.inum, path + [ent.name], filter, root):
                     yield x
 
             c.next()
@@ -865,8 +904,8 @@ class UbiFs:
 
         the `ubiname` argument is not needed, except for printing useful error messages.
         """
-        startkey = (inum, 1, 0)
-        endkey = (inum, 2, 0)
+        startkey = (inum, UBIFS_DATA_KEY, 0)
+        endkey = (inum, UBIFS_DATA_KEY+1, 0)
         c = self.find('ge', startkey)
 
         savedlen = 0
@@ -881,7 +920,7 @@ class UbiFs:
 
             c.next()
 
-        c = self.find('eq', (inum, 0, 0))
+        c = self.find('eq', (inum, UBIFS_INO_KEY, 0))
         inode = c.getnode()
         if savedlen > inode.size:
             print("WARNING: found more (%d bytes) for inode %05d, than specified in the inode(%d bytes) -- %s" % (savedlen, inum, inode.size, ubiname))
@@ -901,7 +940,7 @@ class UbiFs:
             if itype!=UbiFsDirEntry.TYPE_DIRECTORY:
                 # not a directory
                 return None
-            c = self.find('eq', (inum, 2, namehash(part)))
+            c = self.find('eq', (inum, UBIFS_DENT_KEY, namehash(part)))
             if not c or c.eof():
                 # not found
                 return None
@@ -933,90 +972,136 @@ def modestring(mode):
 def timestring(t):
     return datetime.datetime.utcfromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S")
 
-
-def processfile(fn, args):
+def processvolume(vol, volumename, args):
     """
     Perform actions specified by `args` on the ubi image in the file `fn`
     """
-    with open(fn, "rb") as fh:
-        blks = UbiBlocks(fh)
-        if args.verbose:
-            print("===== block =====")
-            blks.dumpvtbl()
+    fs = UbiFs(vol, args.masteroffset)
+    if args.verbose:
+        fs.dumpfs()
 
-        for volid in range(blks.nr_volumes()):
-            vrec = blks.getvrec(volid)
-            vol = blks.getvolume(volid)
+    root = fs.root
+    if args.root:
+        lnum, offset = args.root.split(':', 1)
+        lnum = int(lnum, 16)
+        offset = int(offset, 16)
+        root = fs.readnode(lnum, offset)
 
+    if args.dumptree:
+        fs.printrecursive(root)
+    if args.savedir:
+        savedir = args.savedir.encode(args.encoding)
+
+        count = 0
+        for inum, path in fs.recursefiles(1, [], root=root):
+            try:
+                os.makedirs(os.path.join(*[savedir, volumename] + path[:-1]))
+            except OSError as e:
+                # be happy if someone already created the path
+                if e.errno != errno.EEXIST:
+                    raise
+
+            fullpath = os.path.join(*[savedir, volumename] + path)
+            with open(fullpath, "wb") as fh:
+                fs.savefile(inum, fh, os.path.join(*path))
+
+            if args.preserve:
+                c = fs.find('eq', (inum, UBIFS_INO_KEY, 0))
+                inode = c.getnode()
+
+                # note: we have to do this after closing the file, since the close after savefile
+                # will update the last-modified time.
+                print("time = %s, %s  -- %s" % (inode.atime(), inode.mtime(), fullpath))
+                os.utime(fullpath, (inode.atime(), inode.mtime()))
+                os.chmod(fullpath, inode.mode)
+
+            count += 1
+        print("saved %d files" % count)
+
+    if args.listfiles:
+        for inum, path in fs.recursefiles(1, [], UbiFsDirEntry.ALL_TYPES, root=root):
+            c = fs.find('eq', (inum, UBIFS_INO_KEY, 0))
+            inode = c.getnode()
+
+            if (inode.mode>>12) in (2, 6):   # char or block dev.
+                ma, mi = struct.unpack("BB", inode.data[:2])
+                sizestr = "%d,%4d" % (ma, mi)
+            else:
+                sizestr = str(inode.size)
+
+            if (inode.mode>>12) == 10:
+                linkdata = inode.data
+                if args.encoding:
+                    linkdata = linkdata.decode(args.encoding, 'ignore')
+                linkstr = " -> %s" % linkdata
+            else:
+                linkstr = ""
+
+            filename = b"/".join(path)
+            if args.encoding:
+                filename = filename.decode(args.encoding, 'ignore')
+            print("%s %2d %-5d %-5d %10s %s %s%s" % (modestring(inode.mode), inode.nlink, inode.uid, inode.gid, sizestr, timestring(inode.mtime_sec), filename, linkstr))
+    for srcfile in args.cat:
+        if len(args.cat)>1:
+            print("==>", srcfile, "<==")
+        inum = fs.findfile(srcfile.lstrip('/').split('/'))
+        if inum:
+            fs.savefile(inum, SeekableStdout(), srcfile)
+            if len(args.cat)>1:
+                print()
+        else:
+            print("Not found")
+
+
+def processblocks(fh, args):
+    blks = UbiBlocks(fh)
+    if args.verbose:
+        print("===== block =====")
+        blks.dumpvtbl()
+
+    for volid in range(128):
+        vrec = blks.getvrec(volid)
+        if vrec.empty():
+            continue
+        vol = blks.getvolume(volid)
+
+        try:
             print("== volume %s ==" % vrec.name)
 
-            fs = UbiFs(vol)
-            if args.verbose:
-                fs.dumpfs()
-            if args.dumptree:
-                fs.printrecursive(fs.root)
-            if args.savedir:
-                savedir = args.savedir.encode(args.encoding)
+            processvolume(vol, vrec.name, args)
+        except Exception as e:
+            print("E: %s" % e)
+            if args.debug:
+                raise
 
-                count = 0
-                for inum, path in fs.recursefiles(1, []):
-                    try:
-                        os.makedirs(os.path.join(*[savedir, vrec.name] + path[:-1]))
-                    except OSError as e:
-                        # be happy if someone already created the path
-                        if e.errno != errno.EEXIST:
-                            raise
 
-                    with open(os.path.join(*[savedir, vrec.name] + path), "wb") as fh:
-                        fs.savefile(inum, fh, os.path.join(*path))
-
-                    count += 1
-                print("saved %d files" % count)
-            if args.listfiles:
-                for inum, path in fs.recursefiles(1, [], UbiFsDirEntry.ALL_TYPES):
-                    c = fs.find('eq', (inum, 0, 0))
-                    inode = c.getnode()
-
-                    if (inode.mode>>12) in (2, 6):
-                        ma, mi = struct.unpack("BB", inode.data[:2])
-                        sizestr = "%d,%4d" % (ma, mi)
-                    else:
-                        sizestr = str(inode.size)
-
-                    if (inode.mode>>12) == 10:
-                        linkdata = inode.data
-                        if args.encoding:
-                            linkdata = linkdata.decode(args.encoding, 'ignore')
-                        linkstr = " -> %s" % linkdata
-                    else:
-                        linkstr = ""
-
-                    filename = b"/".join(path)
-                    if args.encoding:
-                        filename = filename.decode(args.encoding, 'ignore')
-                    print("%s %2d %-5d %-5d %10s %s %s%s" % (modestring(inode.mode), inode.nlink, inode.uid, inode.gid, sizestr, timestring(inode.mtime_sec), filename, linkstr))
-            for srcfile in args.cat:
-                if len(args.cat)>1:
-                    print("==>", srcfile, "<==")
-                inum = fs.findfile(srcfile.lstrip('/').split('/'))
-                if inum:
-                    fs.savefile(inum, SeekableStdout(), srcfile)
-                    if len(args.cat)>1:
-                        print()
-                else:
-                    print("Not found")
+def processfile(fn, args):
+    with open(fn, "rb") as fh:
+        magic = fh.read(4)
+        if magic == b'UBI#':
+            processblocks(fh, args)
+        elif magic == b'\x31\x18\x10\x06':
+            processvolume(RawVolume(fh), b"raw", args)
+        else:
+            print("Unknown file type")
 
 
 def main():
     parser = argparse.ArgumentParser(description='UBIFS dumper.')
     parser.add_argument('--savedir', '-s',  type=str, help="save files in all volumes to the specified directory", metavar='DIRECTORY')
+    parser.add_argument('--preserve', '-p',  action='store_true', help="preserve permissions and timestamps")
     parser.add_argument('--cat', '-c',  type=str, action="append", help="extract a single file to stdout", metavar='FILE', default=[])
     parser.add_argument('--listfiles', '-l',  action='store_true', help="list directory contents")
     parser.add_argument('--dumptree', '-d',  action='store_true', help="dump the filesystem b-tree contents")
     parser.add_argument('--verbose', '-v',  action='count', help="print extra info")
+    parser.add_argument('--debug',  action='store_true', help="abort on exceptions")
     parser.add_argument('--encoding', '-e',  type=str, help="filename encoding, default=utf-8", default='utf-8')
+    parser.add_argument('--masteroffset', '-m',  type=str, help="Which master node to use.")
+    parser.add_argument('--root', '-R',  type=str, help="Which Root node to use (hexlnum:hexoffset).")
     parser.add_argument('FILES',  type=str, nargs='+', help="list of ubi images to use")
     args = parser.parse_args()
+    if args.masteroffset:
+        args.masteroffset = [int(_,0) for _ in args.masteroffset.split(':')]
 
     for fn in args.FILES:
         print("==>", fn, "<==")
@@ -1024,9 +1109,8 @@ def main():
             processfile(fn, args)
         except Exception as e:
             print("ERROR", e)
-            import traceback
-            if args.verbose:
-                traceback.print_exc()
+            if args.debug:
+                raise
 
 
 if __name__ == '__main__':
