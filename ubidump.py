@@ -913,6 +913,7 @@ class UbiFs:
         nodedata = self.vol.read(lnum, offs + ch.hdrsize, ch.len - ch.hdrsize)
 
         if crc32(hdrdata[8:] + nodedata) != ch.crc:
+            node.parse(nodedata)
             print(ch, node)
             print(" %s + %s = %08x -> want = %08x" % ( b2a_hex(hdrdata), b2a_hex(nodedata), crc32(hdrdata[8:] + nodedata), ch.crc))
             raise Exception("invalid node crc")
