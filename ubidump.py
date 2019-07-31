@@ -463,13 +463,43 @@ class UbiFsInode:
     """
     nodetype = 0
     hdrsize = 16 + 5*8 + 11*4 + 2*4 + 28
+
+    # note: these values are like the posix stat values,
+    # the UbiFsDirEntry uses a different set of values for the same types.
+    ITYPE_FIFO      =  1  # S_IFIFO 
+    ITYPE_CHARDEV   =  2  # S_IFCHR 
+    ITYPE_DIRECTORY =  4  # S_IFDIR 
+    ITYPE_BLOCKDEV  =  6  # S_IFBLK 
+    ITYPE_REGULAR   =  8  # S_IFREG 
+    ITYPE_SYMLINK   = 10  # S_IFLNK 
+    ITYPE_SOCKET    = 12  # S_IFSOCK
+
     def __init__(self):
         pass
     def parse(self, data):
-        self.key, self.creat_sqnum, self.size, self.atime_sec, self.ctime_sec, self.mtime_sec, \
-                self.atime_nsec, self.ctime_nsec, self.mtime_nsec, self.nlink, self.uid, self.gid, \
-                self.mode, self.flags, self.data_len, self.xattr_cnt, self.xattr_size, \
-                self.xattr_names, self.compr_type = struct.unpack("<16s5Q11L4xLH26x", data[:self.hdrsize])
+        (
+        self.key,          # 16s
+        self.creat_sqnum,  # Q
+        self.size,         # Q
+        self.atime_sec,    # Q
+        self.ctime_sec,    # Q
+        self.mtime_sec,    # Q
+        self.atime_nsec,   # L
+        self.ctime_nsec,   # L
+        self.mtime_nsec,   # L
+        self.nlink,        # L
+        self.uid,          # L
+        self.gid,          # L
+        self.mode,         # L
+        self.flags,        # L
+        self.data_len,     # L
+        self.xattr_cnt,    # L
+        self.xattr_size,   # L
+                           # 4x
+        self.xattr_names,  # L
+        self.compr_type    # H
+                           # 26x
+        ) = struct.unpack("<16s5Q11L4xLH26x", data[:self.hdrsize])
 
         # data contains the symlink string for symbolic links
         self.data = data[self.hdrsize:]
@@ -486,7 +516,7 @@ class UbiFsInode:
     def inodedata_repr(self):
         types = ["0", "FIFO", "CHAR", "3", "DIRENT", "5", "BLOCK", "7", "FILE", "9", "LINK", "11", "SOCK", "13", "14", "15"]
         typ = (self.mode>>12)&0xF
-        if typ in (2, 6):  # CHAR or BLOCK
+        if typ in (inode.ITYPE_CHARDEV, inode.ITYPE_BLOCKDEV):  # CHAR or BLOCK
             return types[typ] + ":" + b2a_hex(self.data).decode('ascii')
         return types[typ] + ":%s" % self.data
 
@@ -502,6 +532,9 @@ class UbiFsInode:
         return self.mtime_sec + self.mtime_nsec / 1000000000.0
     def ctime(self):
         return self.ctime_sec + self.ctime_nsec / 1000000000.0
+    def devnum(self):
+        ma, mi = struct.unpack("BB", self.data[:2])
+        return (ma, mi)
 
 
 class UbiFsData:
@@ -533,6 +566,12 @@ class UbiFsData:
 class UbiFsDirEntry:
     """
     Leafnode in the B-tree, contains a directory entry.
+
+    Properties:
+      * key
+      * inum
+      * type
+      * name
 
     It's b-tree key is formatted like this:
        * 32 bit inode number ( of the directory containing this dirent )
@@ -1262,16 +1301,31 @@ def processvolume(vol, volumename, args):
 
             fullpath = os.path.join(*[savedir, volumename] + path)
             try:
-                if typ ==  1:
+                if typ ==  inode.ITYPE_FIFO:
                     os.mkfifo(fullpath)
-                if typ == 10:
+                elif typ ==  inode.ITYPE_SOCKET:
+                    import socket as s
+                    sock = s.socket(s.AF_UNIX)
+                    sock.bind(fullpath)
+                elif typ == inode.ITYPE_SYMLINK:
                     os.symlink(inode.data, fullpath)
-                elif typ == 4:
+                elif typ == inode.ITYPE_DIRECTORY:
                     os.makedirs(fullpath)
-                elif typ == 8:  # regular
+                elif typ == inode.ITYPE_REGULAR:
                     with open(fullpath, "wb") as fh:
                         fs.exportfile(inum, fh, os.path.join(*path))
+                elif typ in (inode.ITYPE_BLOCKDEV, inode.ITYPE_CHARDEV):
+                    try:
+                        devnum = os.makedev(*inode.devnum())
+                        if devnum < 0:
+                            devnum += 0x100000000
+                        os.mknod(fullpath, inode.mode, devnum)
+                    except PermissionError as e:
+                        # silently ignoring permission error
+                        pass
                 else:
+                    if args.verbose:
+                        print("UNKNOWN inode type: %d" % typ)
                     continue
             except OSError as e:
                 if e.errno != errno.EEXIST:
@@ -1280,7 +1334,6 @@ def processvolume(vol, volumename, args):
             if args.preserve and typ != 10:
                 # note: we have to do this after closing the file, since the close after exportfile
                 # will update the last-modified time.
-                print("time = %s, %s  -- %s" % (inode.atime(), inode.mtime(), fullpath))
                 os.utime(fullpath, (inode.atime(), inode.mtime()))
                 os.chmod(fullpath, inode.mode)
 
@@ -1292,13 +1345,12 @@ def processvolume(vol, volumename, args):
             c = fs.find('eq', (inum, UBIFS_INO_KEY, 0))
             inode = c.getnode()
 
-            if (inode.mode>>12) in (2, 6):   # char or block dev.
-                ma, mi = struct.unpack("BB", inode.data[:2])
-                sizestr = "%d,%4d" % (ma, mi)
+            if (inode.mode>>12) in (inode.ITYPE_CHARDEV, inode.ITYPE_BLOCKDEV):   # char or block dev.
+                sizestr = "%d,%4d" % inode.devnum()
             else:
                 sizestr = str(inode.size)
 
-            if (inode.mode>>12) == 10:
+            if (inode.mode>>12) == inode.ITYPE_SYMLINK:
                 linkdata = inode.data
                 if args.encoding:
                     linkdata = linkdata.decode(args.encoding, 'ignore')
