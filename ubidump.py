@@ -1255,22 +1255,29 @@ def processvolume(vol, volumename, args):
         savedir = args.savedir.encode(args.encoding)
 
         count = 0
-        for inum, path in fs.recursefiles(1, [], root=root):
+        for inum, path in fs.recursefiles(1, [], UbiFsDirEntry.ALL_TYPES, root=root):
+            c = fs.find('eq', (inum, UBIFS_INO_KEY, 0))
+            inode = c.getnode()
+            typ = inode.mode >> 12
+
+            fullpath = os.path.join(*[savedir, volumename] + path)
             try:
-                os.makedirs(os.path.join(*[savedir, volumename] + path[:-1]))
+                if typ ==  1:
+                    os.mkfifo(fullpath)
+                if typ == 10:
+                    os.symlink(inode.data, fullpath)
+                elif typ == 4:
+                    os.makedirs(fullpath)
+                elif typ == 8:  # regular
+                    with open(fullpath, "wb") as fh:
+                        fs.exportfile(inum, fh, os.path.join(*path))
+                else:
+                    continue
             except OSError as e:
-                # be happy if someone already created the path
                 if e.errno != errno.EEXIST:
                     raise
 
-            fullpath = os.path.join(*[savedir, volumename] + path)
-            with open(fullpath, "wb") as fh:
-                fs.exportfile(inum, fh, os.path.join(*path))
-
-            if args.preserve:
-                c = fs.find('eq', (inum, UBIFS_INO_KEY, 0))
-                inode = c.getnode()
-
+            if args.preserve and typ != 10:
                 # note: we have to do this after closing the file, since the close after exportfile
                 # will update the last-modified time.
                 print("time = %s, %s  -- %s" % (inode.atime(), inode.mtime(), fullpath))
