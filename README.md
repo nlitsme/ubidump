@@ -53,6 +53,14 @@ View the contents of b-tree database from the volumes in `image.ubi`:
     python ubidump.py  -d  image.ubi
 
 
+Install
+=======
+
+Install the required python modules using:
+
+    pip install -r requirements.txt
+
+
 Dependencies
 ============
 
