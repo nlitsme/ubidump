@@ -49,15 +49,15 @@ class SeekableStdout:
     def __init__(self):
         self.pos = 0
 
-    def seek(self, newpos, whence=0):
-        if whence==0:
+    def seek(self, newpos, whence=os.SEEK_SET):
+        if whence==os.SEEK_SET:
             if newpos < self.pos:
                 print("WARNING: can't seek stdout backwards")
                 return -1
             if newpos > self.pos:
                 self.seekforward(newpos - self.pos)
             self.pos = newpos
-        elif whence==1:
+        elif whence==os.SEEK_CUR:
             if newpos < 0:
                 print("WARNING: can't seek stdout backwards")
                 return -1
@@ -242,7 +242,7 @@ class UbiBlocks:
         self.fh = fh
         self.lebsize = self.find_blocksize()
 
-        fh.seek(0, 2)
+        fh.seek(0, os.SEEK_END)
         self.filesize = fh.tell()
         self.maxlebs = self.filesize // self.lebsize
 
@@ -426,23 +426,26 @@ def namehash(name):
     return a
 
 
+COMPR_NONE = 0
+COMPR_LZO = 1
+COMPR_ZLIB = 2
 def decompress(data, buflen, compr_type):
-    if compr_type==0:
+    if compr_type==COMPR_NONE:
         return data
-    elif compr_type==1:
+    elif compr_type==COMPR_LZO:
         return lzo.decompress(data, False, buflen)
-    elif compr_type==2:
+    elif compr_type==COMPR_ZLIB:
         return zlib.decompress(data, -zlib.MAX_WBITS)
     else:
         raise Exception("unknown compression type")
 
 
 def compress(data, compr_type):
-    if compr_type==0:
+    if compr_type==COMPR_NONE:
         return data
-    elif compr_type==1:
+    elif compr_type==COMPR_LZO:
         return lzo.compress(data, False)
-    elif compr_type==2:
+    elif compr_type==COMPR_ZLIB:
         return zlib.compress(data, -zlib.MAX_WBITS)
     else:
         raise Exception("unknown compression type")
@@ -515,7 +518,7 @@ class UbiFsInode:
 
     def inodedata_repr(self):
         types = ["0", "FIFO", "CHAR", "3", "DIRENT", "5", "BLOCK", "7", "FILE", "9", "LINK", "11", "SOCK", "13", "14", "15"]
-        typ = (self.mode>>12)&0xF
+        typ = self.nodetype()
         if typ in (inode.ITYPE_CHARDEV, inode.ITYPE_BLOCKDEV):  # CHAR or BLOCK
             return types[typ] + ":" + b2a_hex(self.data).decode('ascii')
         return types[typ] + ":%s" % self.data
@@ -535,6 +538,8 @@ class UbiFsInode:
     def devnum(self):
         ma, mi = struct.unpack("BB", self.data[:2])
         return (ma, mi)
+    def nodetype(self):
+        return (self.mode >> 12) & 0xF
 
 
 class UbiFsData:
@@ -1254,7 +1259,7 @@ def modestring(mode):
 
         return rflag + wflag + xflag
 
-    return typechar[mode>>12] + rwx((mode>>6)&7, (mode>>11)&1, 's') + rwx((mode>>3)&7, (mode>>10)&1, 's') + rwx(mode&7, (mode>>9)&1, 't')
+    return typechar[(mode>>12)&15] + rwx((mode>>6)&7, (mode>>11)&1, 's') + rwx((mode>>3)&7, (mode>>10)&1, 's') + rwx(mode&7, (mode>>9)&1, 't')
 
 
 def timestring(t):
@@ -1297,7 +1302,7 @@ def processvolume(vol, volumename, args):
         for inum, path in fs.recursefiles(1, [], UbiFsDirEntry.ALL_TYPES, root=root):
             c = fs.find('eq', (inum, UBIFS_INO_KEY, 0))
             inode = c.getnode()
-            typ = inode.mode >> 12
+            typ = inode.nodetype()
 
             fullpath = os.path.join(*[savedir, volumename] + path)
             try:
@@ -1331,7 +1336,7 @@ def processvolume(vol, volumename, args):
                 if e.errno != errno.EEXIST:
                     raise
 
-            if args.preserve and typ != 10:
+            if args.preserve and typ != inode.ITYPE_SYMLINK:
                 # note: we have to do this after closing the file, since the close after exportfile
                 # will update the last-modified time.
                 os.utime(fullpath, (inode.atime(), inode.mtime()))
@@ -1345,12 +1350,12 @@ def processvolume(vol, volumename, args):
             c = fs.find('eq', (inum, UBIFS_INO_KEY, 0))
             inode = c.getnode()
 
-            if (inode.mode>>12) in (inode.ITYPE_CHARDEV, inode.ITYPE_BLOCKDEV):   # char or block dev.
+            if inode.nodetype() in (inode.ITYPE_CHARDEV, inode.ITYPE_BLOCKDEV):   # char or block dev.
                 sizestr = "%d,%4d" % inode.devnum()
             else:
                 sizestr = str(inode.size)
 
-            if (inode.mode>>12) == inode.ITYPE_SYMLINK:
+            if inode.nodetype() == inode.ITYPE_SYMLINK:
                 linkdata = inode.data
                 if args.encoding:
                     linkdata = linkdata.decode(args.encoding, 'ignore')
