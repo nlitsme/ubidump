@@ -25,6 +25,9 @@ else:
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
 
+if sys.version_info[0] == 2:
+    reload(sys)
+    sys.setdefaultencoding('utf-8')
 
 dependencies = [
     'python-lzo>=1.11',
@@ -519,7 +522,7 @@ class UbiFsInode:
     def inodedata_repr(self):
         types = ["0", "FIFO", "CHAR", "3", "DIRENT", "5", "BLOCK", "7", "FILE", "9", "LINK", "11", "SOCK", "13", "14", "15"]
         typ = self.nodetype()
-        if typ in (inode.ITYPE_CHARDEV, inode.ITYPE_BLOCKDEV):  # CHAR or BLOCK
+        if typ in (self.ITYPE_CHARDEV, self.ITYPE_BLOCKDEV):  # CHAR or BLOCK
             return types[typ] + ":" + b2a_hex(self.data).decode('ascii')
         return types[typ] + ":%s" % self.data
 
