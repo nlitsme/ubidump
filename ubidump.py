@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 """
 Tool for listing and extracting data from an UBI (Unsorted Block Image) image.
 
