@@ -29,6 +29,9 @@ if sys.version_info[0] == 2:
     reload(sys)
     sys.setdefaultencoding('utf-8')
 
+# Note that ubidump depends on the 'header=False' argument to compress/decompress,
+# introduced in python-lzo 1.09
+
 dependencies = [
     'python-lzo>=1.11',
     'crcmod>=1.7'
