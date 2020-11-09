@@ -60,12 +60,26 @@ Install the required python modules using:
 
     pip install -r requirements.txt
 
+or as a pip package:
+
+    pip install ubidump
+
+You may need to manually install your operarating system libraries for lzo first:
+
+on linux:
+
+    apt install liblzo2-dev
+
+on MacOS:
+
+    brew install lzo
+
 
 Dependencies
 ============
 
- * python2
- * python-lzo
+ * python2 or python3
+ * python-lzo  ( >= 1.09, which introduces the 'header=False' argument )
  * crcmod
 
 TODO
@@ -78,6 +92,7 @@ TODO
  * analyze fs structure for unused inodes, dirents
  * verify that data block size equals the size mentioned in the inode.
  * add support for ubifs ( without the ubi layer )
+ * add option to extract a raw volume.
 
 References
 ==========
