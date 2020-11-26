@@ -74,6 +74,9 @@ on MacOS:
 
     brew install lzo
 
+maybe you need to build the python library like this:
+
+    LDFLAGS=-L/usr/local/lib CFLAGS=-I/usr/local/include/lzo pip3 install python-lzo
 
 Dependencies
 ============
