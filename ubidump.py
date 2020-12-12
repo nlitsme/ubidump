@@ -1281,6 +1281,8 @@ def processvolume(vol, volumename, args):
 
     Or a UbiVolume, with the block management layer.
     """
+    nr_symlink_warnings = 0
+
     fs = UbiFs(vol, args.masteroffset)
     if args.verbose:
         fs.dumpfs()
@@ -1319,7 +1321,13 @@ def processvolume(vol, volumename, args):
                     sock = s.socket(s.AF_UNIX)
                     sock.bind(fullpath)
                 elif typ == inode.ITYPE_SYMLINK:
-                    os.symlink(inode.data, fullpath)
+                    try:
+                        os.symlink(inode.data, fullpath)
+                    except (AttributeError, OSError):
+                        # python2 on windows does not support 'symlink', and with python3
+                        # you still need special permissions to create a symlink. So often
+                        # on windows os.symlink will fail.
+                        nr_symlink_warnings += 1
                 elif typ == inode.ITYPE_DIRECTORY:
                     os.makedirs(fullpath)
                 elif typ == inode.ITYPE_REGULAR:
@@ -1350,6 +1358,8 @@ def processvolume(vol, volumename, args):
 
             count += 1
         print("saved %d files" % count)
+        if nr_symlink_warnings:
+            print("Failed to create %d symlinks." % nr_symlink_warnings)
 
     if args.listfiles:
         for inum, path in fs.recursefiles(1, [], UbiFsDirEntry.ALL_TYPES, root=root):
