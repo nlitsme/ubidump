@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 """
 Tool for listing and extracting data from an UBI (Unsorted Block Image) image.
 
@@ -17,6 +18,11 @@ import sys
 from collections import defaultdict
 
 import pkg_resources
+
+try:
+    import zstandard as zstd
+except ModuleNotFoundError:
+    zstd = None
 
 if sys.version_info[0] == 2:
     stdin = sys.stdin
@@ -435,6 +441,7 @@ def namehash(name):
 COMPR_NONE = 0
 COMPR_LZO = 1
 COMPR_ZLIB = 2
+COMPR_ZSTD = 3
 def decompress(data, buflen, compr_type):
     if compr_type==COMPR_NONE:
         return data
@@ -442,6 +449,8 @@ def decompress(data, buflen, compr_type):
         return lzo.decompress(data, False, buflen)
     elif compr_type==COMPR_ZLIB:
         return zlib.decompress(data, -zlib.MAX_WBITS)
+    elif compr_type==COMPR_ZSTD and zstd:
+        return zstd.decompress(data)
     else:
         raise Exception("unknown compression type")
 
@@ -453,6 +462,8 @@ def compress(data, compr_type):
         return lzo.compress(data, False)
     elif compr_type==COMPR_ZLIB:
         return zlib.compress(data, -zlib.MAX_WBITS)
+    elif compr_type==COMPR_ZSTD and zstd:
+        return zstd.compress(data)
     else:
         raise Exception("unknown compression type")
 
