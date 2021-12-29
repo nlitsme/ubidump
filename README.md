@@ -78,12 +78,17 @@ maybe you need to build the python library like this:
 
     LDFLAGS=-L/usr/local/lib CFLAGS=-I/usr/local/include/lzo pip3 install python-lzo
 
+
+When you need zstd compression, you will need to install the `zstandard` module.
+
+
 Dependencies
 ============
 
  * python2 or python3
  * python-lzo  ( >= 1.09, which introduces the 'header=False' argument )
  * crcmod
+ * optional: zstandard
 
 TODO
 ====
