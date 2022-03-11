@@ -1317,6 +1317,7 @@ def processvolume(vol, volumename, args):
     if args.savedir:
         savedir = args.savedir.encode(args.encoding)
 
+        os.makedirs(savedir.decode(args.encoding) + '/' + volumename.decode(args.encoding))
         count = 0
         for inum, path in fs.recursefiles(1, [], UbiFsDirEntry.ALL_TYPES, root=root):
             c = fs.find('eq', (inum, UBIFS_INO_KEY, 0))
