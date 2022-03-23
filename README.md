@@ -77,17 +77,22 @@ optional arguments:
 Usage Examples
 --------------
 
-View the contents of the `/etc/passwd` file in the filesystem image `image.ubi`:
+Print the contents of the `/etc/passwd` file in the filesystem image `image.ubi` to `STDOUT`:
 
-    python ubidump.py  -c /etc/passwd  image.ubi
+    python ubidump.py -c /etc/passwd  image.ubi
+
+Extract contents of the filesystem image `image.ubi` to directory `/tmp/foo`:
+
+    python ubidump.py -s /tmp/foo
 
 List the files in all the volumes in `image.ubi`:
 
-    python ubidump.py  -l  image.ubi
+    python ubidump.py -l image.ubi
 
 View the contents of b-tree database from the volumes in `image.ubi`:
 
-    python ubidump.py  -d  image.ubi
+    python ubidump.py -d image.ubi
+
 
 
 Install
