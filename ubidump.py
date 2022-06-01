@@ -21,7 +21,7 @@ import pkg_resources
 
 try:
     import zstandard as zstd
-except ModuleNotFoundError:
+except ImportError:
     zstd = None
 
 if sys.version_info[0] == 2:
