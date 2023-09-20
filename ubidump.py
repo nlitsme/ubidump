@@ -126,7 +126,7 @@ class UbiEcHeader:
         hdr_crc,          # L
         ) = struct.unpack(">4sB3xQLLL32xL", data)
         if self.magic != b'UBI#':
-            raise Exception("magic num mismatch")
+            raise Exception("UBI# ec hdr magic num mismatch")
         if hdr_crc != crc32(data[:-4]):
             raise Exception("crc mismatch")
     def encode(self):
@@ -169,7 +169,7 @@ class UbiVidHead:
         hdr_crc,           # L
         )= struct.unpack(">4s4BLL4x4L4xQ12xL", data)
         if self.magic != b'UBI!':
-            raise Exception("magic num mismatch")
+            raise Exception("UBI! volid magic num mismatch")
         if hdr_crc != crc32(data[:-4]):
             raise Exception("crc mismatch")
 
@@ -1011,7 +1011,11 @@ class UbiFsCommonHeader:
                            # 16  2x
         ) = struct.unpack("<LLQLBB2x", data)
         if self.magic != 0x06101831:
-            raise Exception("magic num mismatch")
+            if self.magic in (0x73717368, 0x68737173):
+                print("volume contains a squashfs filesystem, extract with --saveraw, and then use unsquashfs")
+            else:
+                print("unknown magic: %08x" % self.magic)
+            raise Exception("node magic num mismatch")
     def encode(self):
         return struct.pack("<LLQLBB2x", self.magic, self.crc, self.sqnum, self.len, self.node_type, self.group_type)
 
