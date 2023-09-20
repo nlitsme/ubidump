@@ -52,6 +52,12 @@ View the contents of b-tree database from the volumes in `image.ubi`:
 
     python ubidump.py  -d  image.ubi
 
+Extract an unsupported volume type, so you can analyze it with other tools:
+
+    python ubidump.py  -v 0 --saveraw unknownvol.bin  image.ubi
+
+Note that often ubi images contain squashfs volumes, which can be extracted using tools like
+[unsquashfs](https://github.com/plougher/squashfs-tools) or [rdsquashfs](https://github.com/AgentD/squashfs-tools-ng)
 
 Install
 =======
