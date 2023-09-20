@@ -114,8 +114,17 @@ class UbiEcHeader:
     def __init__(self):
         self.magic = b'UBI#'
     def parse(self, data):
-        self.magic, self.version, self.erasecount, self.vid_hdr_ofs, self.data_ofs, \
-                self.image_seq, hdr_crc = struct.unpack(">4sB3xQLLL32xL", data)
+        (
+        self.magic,       # 4s
+        self.version,     # B
+                          # 3x
+        self.erasecount,  # Q
+        self.vid_hdr_ofs, # L
+        self.data_ofs,    # L
+        self.image_seq,   # L
+                          # 32x
+        hdr_crc,          # L
+        ) = struct.unpack(">4sB3xQLLL32xL", data)
         if self.magic != b'UBI#':
             raise Exception("magic num mismatch")
         if hdr_crc != crc32(data[:-4]):
@@ -141,9 +150,24 @@ class UbiVidHead:
         self.magic = b'UBI!'
 
     def parse(self, data):
-        self.magic, self.version, self.vol_type, self.copy_flag, self.compat, self.vol_id, \
-                self.lnum, self.data_size, self.used_ebs, self.data_pad, self.data_crc, \
-                self.sqnum, hdr_crc = struct.unpack(">4s4BLL4x4L4xQ12xL", data)
+        (
+        self.magic,        # 4s
+        self.version,      # B
+        self.vol_type,     # B
+        self.copy_flag,    # B
+        self.compat,       # B
+        self.vol_id,       # L
+        self.lnum,         # L
+                           # 4x
+        self.data_size,    # L
+        self.used_ebs,     # L
+        self.data_pad,     # L
+        self.data_crc,     # L
+                           # 4x
+        self.sqnum,        # Q
+                           # 12x
+        hdr_crc,           # L
+        )= struct.unpack(">4s4BLL4x4L4xQ12xL", data)
         if self.magic != b'UBI!':
             raise Exception("magic num mismatch")
         if hdr_crc != crc32(data[:-4]):
@@ -174,8 +198,18 @@ class UbiVtblRecord:
     def __init__(self):
         self.reserved_pebs = 0
     def parse(self, data):
-        self.reserved_pebs, self.alignment, self.data_pad, self.vol_type, self.upd_marker, \
-                name_len, self.name, self.flags, crc = struct.unpack(">3LBBH128sB23xL", data)
+        (
+        self.reserved_pebs, # L
+        self.alignment,     # L
+        self.data_pad,      # L
+        self.vol_type,      # B
+        self.upd_marker,    # B
+        name_len,           # H
+        self.name,          # 128s
+        self.flags,         # B
+                            # 23x
+        crc,                # L
+        ) = struct.unpack(">3LBBH128sB23xL", data)
         if crc != crc32(data[:-4]):
             raise Exception("crc mismatch")
         self.name = self.name[:name_len]
@@ -217,6 +251,11 @@ class UbiVolume:
     def hexdump(self, lnum, offs, size):
         print("[%03d:0x%05x] %s" % (lnum, offs, b2a_hex(self.read(lnum, offs, size))))
 
+    def saveraw(self, filename):
+        with open(filename, "wb") as fh:
+            for lnum in range(self.blks.maxlebs):
+                data = self.read(lnum, 0, self.blks.leb_size-self.dataofs)
+                fh.write(data)
 
 class RawVolume:
     """
@@ -239,11 +278,15 @@ class RawVolume:
         data = self.fh.read(0x200)
         values = struct.unpack("<12L", data[:4*12])
         if values[0] == 0x06101831 and values[5] == 6:
-            # is superblock
-            return values[9]
+            # node magic, and nodetype == 6:superblock
+            return values[9]  # sb.leb_size
 
     def hexdump(self, lnum, offs, size):
-        print("[%03d:0x%05x] %s" % (lnum, offs, b2a_hex(self.read(lnum, offs, size))))
+        print("R:[%03d:0x%05x] %s" % (lnum, offs, b2a_hex(self.read(lnum, offs, size))))
+
+    def saveraw(self, filename):
+        print("TODO")
+
 
 
 class UbiBlocks:
@@ -252,11 +295,11 @@ class UbiBlocks:
     """
     def __init__(self, fh):
         self.fh = fh
-        self.lebsize = self.find_blocksize()
+        self.leb_size = self.find_blocksize()
 
         fh.seek(0, os.SEEK_END)
         self.filesize = fh.tell()
-        self.maxlebs = self.filesize // self.lebsize
+        self.maxlebs = self.filesize // self.leb_size
 
         self.scanblocks()
 
@@ -265,7 +308,7 @@ class UbiBlocks:
             return
         self.scanvtbls(self.vmap[VTBL_VOLID][0])
 
-        print("%d named volumes found, %d physical volumes, blocksize=0x%x" % (self.nr_named, len(self.vmap), self.lebsize))
+        print("%d named volumes found, %d physical volumes, blocksize=0x%x" % (self.nr_named, len(self.vmap), self.leb_size))
 
     def find_blocksize(self):
         self.fh.seek(0)
@@ -300,11 +343,11 @@ class UbiBlocks:
                 pass
 
     def readblock(self, lnum, offs, size):
-        self.fh.seek(lnum * self.lebsize + offs)
+        self.fh.seek(lnum * self.leb_size + offs)
         return self.fh.read(size)
 
     def writeblock(self, lnum, offs, data):
-        self.fh.seek(lnum * self.lebsize + offs)
+        self.fh.seek(lnum * self.leb_size + offs)
         return self.fh.write(data)
 
     def hexdump(self, lnum, offs, size):
@@ -573,7 +616,12 @@ class UbiFsData:
     def __init__(self):
         pass
     def parse(self, data):
-        self.key, self.size, self.compr_type = struct.unpack("<16sLH2x", data[:self.hdrsize])
+        (
+        self.key,        # 16s
+        self.size,       # L
+        self.compr_type, # H
+                         # 2x
+        )= struct.unpack("<16sLH2x", data[:self.hdrsize])
         self.data = decompress(data[self.hdrsize:], self.size, self.compr_type)
         if len(self.data) != self.size:
             raise Exception("data size mismatch")
@@ -616,7 +664,14 @@ class UbiFsDirEntry:
     def __init__(self):
         pass
     def parse(self, data):
-        self.key, self.inum, self.type, nlen = struct.unpack("<16sQxBH4x", data[:self.hdrsize])
+        (
+            self.key,  # 16s
+            self.inum, # Q
+                       # x
+            self.type, # B
+            nlen,      # H
+                       # 4x
+        ) = struct.unpack("<16sQxBH4x", data[:self.hdrsize])
         self.name = data[self.hdrsize:-1]
         if len(self.name) != nlen:
             raise Exception("name length mismatch")
@@ -657,7 +712,12 @@ class UbiFsTruncation:
     def __init__(self):
         pass
     def parse(self, data):
-        self.inum, self.old_size, self.new_size = struct.unpack("<L12xQQ", data)
+        (
+            self.inum,     # L
+                           # 12x
+            self.old_size, # Q
+            self.new_size, # Q
+        ) = struct.unpack("<L12xQQ", data)
     def encode(self):
         return struct.pack("<L12xQQ", self.inum, self.old_size, self.new_size)
     def __repr__(self):
@@ -688,11 +748,32 @@ class UbiFsSuperblock:
     def __init__(self):
         pass
     def parse(self, data):
-        self.key_hash, self.key_fmt, self.flags, self.min_io_size, self.leb_size, self.leb_cnt, \
-                self.max_leb_cnt, self.max_bud_bytes, self.log_lebs, self.lpt_lebs, self.orph_lebs, \
-                self.jhead_cnt, self.fanout, self.lsave_cnt, self.fmt_version, self.default_compr, \
-                self.rp_uid, self.rp_gid, self.rp_size, self.time_gran, self.uuid, self.ro_compat_version \
-            = struct.unpack("<2xBB5LQ7LH2xLLQL16sL", data[:self.hdrsize])
+        (
+                                    # 2x
+        self.key_hash,              # B
+        self.key_fmt,               # B
+        self.flags,                 # L
+        self.min_io_size,           # L
+        self.leb_size,              # L
+        self.leb_cnt,               # L
+        self.max_leb_cnt,           # L
+        self.max_bud_bytes,         # Q
+        self.log_lebs,              # L
+        self.lpt_lebs,              # L
+        self.orph_lebs,             # L
+        self.jhead_cnt,             # L
+        self.fanout,                # L
+        self.lsave_cnt,             # L
+        self.fmt_version,           # L
+        self.default_compr,         # H
+                                    # 2x
+        self.rp_uid,                # L
+        self.rp_gid,                # L
+        self.rp_size,               # Q
+        self.time_gran,             # L
+        self.uuid,                  # 16s
+        self.ro_compat_version,     # L
+        ) = struct.unpack("<2xBB5LQ7LH2xLLQL16sL", data[:self.hdrsize])
         if len(data) != self.hdrsize + 3968:
             raise Exception("invalid superblock padding size")
     def encode(self):
@@ -721,12 +802,36 @@ class UbiFsMaster:
     def __init__(self):
         pass
     def parse(self, data):
-        self.highest_inum, self.cmt_no, self.flags, self.log_lnum, self.root_lnum, self.root_offs, \
-                self.root_len, self.gc_lnum, self.ihead_lnum, self.ihead_offs, self.index_size, \
-                self.total_free, self.total_dirty, self.total_used, self.total_dead, \
-                self.total_dark, self.lpt_lnum, self.lpt_offs, self.nhead_lnum, self.nhead_offs, \
-                self.ltab_lnum, self.ltab_offs, self.lsave_lnum, self.lsave_offs, self.lscan_lnum, \
-                self.empty_lebs, self.idx_lebs, self.leb_cnt = struct.unpack("<QQ8L6Q12L", data[:self.hdrsize])
+        (
+        self.highest_inum, # Q
+        self.cmt_no,       # Q
+        self.flags,        # L
+        self.log_lnum,     # L
+        self.root_lnum,    # L
+        self.root_offs,    # L
+        self.root_len,     # L
+        self.gc_lnum,      # L
+        self.ihead_lnum,   # L
+        self.ihead_offs,   # L
+        self.index_size,   # Q
+        self.total_free,   # Q
+        self.total_dirty,  # Q
+        self.total_used,   # Q
+        self.total_dead,   # Q
+        self.total_dark,   # Q
+        self.lpt_lnum,     # L
+        self.lpt_offs,     # L
+        self.nhead_lnum,   # L
+        self.nhead_offs,   # L
+        self.ltab_lnum,    # L
+        self.ltab_offs,    # L
+        self.lsave_lnum,   # L
+        self.lsave_offs,   # L
+        self.lscan_lnum,   # L
+        self.empty_lebs,   # L
+        self.idx_lebs,     # L
+        self.leb_cnt,      # L
+        ) = struct.unpack("<QQ8L6Q12L", data[:self.hdrsize])
         if len(data) != self.hdrsize + 344:
             raise Exception("invalid master padding size")
 
@@ -896,7 +1001,15 @@ class UbiFsCommonHeader:
         self.crc = 0
         self.sqnum = 0
     def parse(self, data):
-        self.magic, self.crc, self.sqnum, self.len, self.node_type, self.group_type = struct.unpack("<LLQLBB2x", data)
+        (
+        self.magic,        # 00  L
+        self.crc,          # 04  L
+        self.sqnum,        # 08  Q
+        self.len,          # 10  L
+        self.node_type,    # 14  B
+        self.group_type,   # 15  B
+                           # 16  2x
+        ) = struct.unpack("<LLQLBB2x", data)
         if self.magic != 0x06101831:
             raise Exception("magic num mismatch")
     def encode(self):
@@ -1307,6 +1420,8 @@ def processvolume(vol, volumename, args):
 
     if args.hexdump and isinstance(vol, RawVolume):
         vol.hexdump(*args.hexdump)
+    if args.saveraw and isinstance(vol, RawVolume):
+        vol.saveraw(args.saveraw)
     if args.nodedump:
         fs.dumpnode(*args.nodedump)
 
@@ -1423,6 +1538,13 @@ def processblocks(fh, args):
             vol = blks.getvolume(args.volume)
             vol.hexdump(*args.hexdump)
 
+    if args.saveraw:
+        if args.volume is None:
+            blks.saveraw(args.saveraw)
+        else:
+            vol = blks.getvolume(args.volume)
+            vol.saveraw(args.saveraw)
+
     for volid in range(128):
         vrec = blks.getvrec(volid)
         if vrec.empty():
@@ -1454,13 +1576,23 @@ def findpattern(data, pattn, blocksize):
 
 
 def raw_ec_dump(o, data):
+    # UBI#  blocks
     # note: ec blocks should be all the same.
     data = data.rstrip(b'\xff')
 
     if len(data)!=64:
         print("%08x: %s" % (o, b2a_hex(data.rstrip(b'\xff'))))
         return
-    m, v, ec, vidofs, datofs, iseq, zero, crc = struct.unpack(">4sLQLLL32sL", data)
+    (
+        m,       # 4s
+        v,       # L
+        ec,      # Q
+        vidofs,  # L
+        datofs,  # L
+        iseq,    # L
+        zero,    # 32s
+        crc,     # L
+    ) = struct.unpack(">4sLQLLL32sL", data)
     print("%08x: %s %08x %010x  %08x %08x %08x %s %08x" % (o, m, v, ec, vidofs, datofs, iseq, zero, crc))
 
 
@@ -1472,6 +1604,7 @@ def raw_vid_dump(o, data):
 
 
 def raw_vhdr_dump(o, data):
+    # UBI! blocks
     data = data.rstrip(b'\xff')
     data2 = b''
     o2 = 0
@@ -1480,7 +1613,24 @@ def raw_vhdr_dump(o, data):
         o2 = o + data.find(data2)
         data = data[:64]
 
-    m,  v, vt, cf, compat,  volid, lnum, zero1, dsize, usedebs, pad, dcrc, zero2, sqnum, zero3, hcrc = struct.unpack(">4s4BLL4s4L4sQ12sL", data)
+    (
+        m,         # 4s
+        v,         # B
+        vt,        # B
+        cf,        # B
+        compat,    # B
+        volid,     # L
+        lnum,      # L
+        zero1,     # 4s
+        dsize,     # L
+        usedebs,   # L
+        pad,       # L
+        dcrc,      # L
+        zero2,     # 4s
+        sqnum,     # Q
+        zero3,     # 12s
+        hcrc,      # L
+    ) = struct.unpack(">4s4BLL4s4L4sQ12sL", data)
 
     print("%08x: %s %d %d %d %d %08x %08x %s %08x %08x %08x %08x %s %010x %s %08x" % (o, m,  v, vt, cf, compat,  volid, lnum, zero1, dsize, usedebs, pad, dcrc, zero2, sqnum, zero3, hcrc))
     if len(data2)==0xAC*0x80:
@@ -1557,6 +1707,7 @@ def main():
     parser.add_argument('--rawdump', action='store_true', help="Raw hexdump of entire volume.") 
     parser.add_argument('--volume', type=str, help="which volume to hexdump", metavar="VOLNR")
     parser.add_argument('--hexdump', type=str, help="hexdump part of a volume/leb[/ofs[/size]]", metavar="LEB:OFF:N") 
+    parser.add_argument('--saveraw', type=str, help="save the entire volume to the specified file", metavar="FILENAME") 
     parser.add_argument('--nodedump', type=str, help="dump specific node at volume/leb[/ofs]", metavar="LEB:OFF") 
     parser.add_argument('FILES',  type=str, nargs='+', help="list of ubi images to use")
     args = parser.parse_args()
