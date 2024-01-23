@@ -253,7 +253,8 @@ class UbiVolume:
 
     def saveraw(self, filename):
         with open(filename, "wb") as fh:
-            for lnum in range(self.blks.maxlebs):
+            rangeOfLNum = len(self.blks.vmap[self.volid])
+            for lnum in range(rangeOfLNum):
                 data = self.read(lnum, 0, self.blks.leb_size-self.dataofs)
                 fh.write(data)
 
@@ -1556,7 +1557,7 @@ def processblocks(fh, args):
         vol = blks.getvolume(volid)
 
         try:
-            print("== volume %s ==" % vrec.name)
+            print("== volume %s with id %d ==" % (vrec.name, volid))
 
             processvolume(vol, vrec.name, args)
         except Exception as e:
