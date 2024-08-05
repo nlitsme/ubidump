@@ -1483,9 +1483,10 @@ def processvolume(vol, volumename, args):
             except Exception as e:
                 print(f"ERROR writing {fullpath}, {e}")
 
-            if args.preserve and typ != inode.ITYPE_SYMLINK:
+            if args.preserve and typ != inode.ITYPE_SYMLINK and os.path.exists(fullpath):
                 # note: we have to do this after closing the file, since the close after exportfile
                 # will update the last-modified time.
+                # the check for existence is because earlier mknod may fail when not root.
                 os.utime(fullpath, (inode.atime(), inode.mtime()))
                 os.chmod(fullpath, inode.mode)
                 try:
