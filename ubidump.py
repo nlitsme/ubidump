@@ -1436,7 +1436,7 @@ def processvolume(vol, volumename, args):
     if args.savedir:
         savedir = args.savedir.encode(args.encoding)
 
-        os.makedirs(savedir.decode(args.encoding) + '/' + volumename.decode(args.encoding))
+        os.makedirs(savedir.decode(args.encoding) + '/' + volumename.decode(args.encoding), exist_ok=True)
         count = 0
         for inum, path in fs.recursefiles(1, [], UbiFsDirEntry.ALL_TYPES, root=root):
             c = fs.find('eq', (inum, UBIFS_INO_KEY, 0))
@@ -1479,13 +1479,20 @@ def processvolume(vol, volumename, args):
                     continue
             except OSError as e:
                 if e.errno != errno.EEXIST:
-                    raise
+                    print(f"ERROR writing {fullpath}, {e}")
+            except Exception as e:
+                print(f"ERROR writing {fullpath}, {e}")
 
             if args.preserve and typ != inode.ITYPE_SYMLINK:
                 # note: we have to do this after closing the file, since the close after exportfile
                 # will update the last-modified time.
                 os.utime(fullpath, (inode.atime(), inode.mtime()))
                 os.chmod(fullpath, inode.mode)
+                try:
+                    os.chown(fullpath, inode.uid, inode.gid)
+                except PermissionError as e:
+                    # silently ignoring permission error
+                    pass
 
             count += 1
         print("saved %d files" % count)
