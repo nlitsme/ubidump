@@ -40,17 +40,59 @@ with the second modprobe line.
 Usage
 =====
 
-View the contents of the `/etc/passwd` file in the filesystem image `image.ubi`:
+```
+usage: ubidump.py [-h] [--savedir DIRECTORY] [--preserve] [--cat FILE]
+                  [--listfiles] [--dumptree] [--verbose] [--debug]
+                  [--encoding ENCODING] [--masteroffset MASTEROFFSET]
+                  [--root ROOT] [--rawdump] [--volume VOLUME]
+                  [--hexdump LEB:OFF:N] [--nodedump LEB:OFF]
+                  FILES [FILES ...]
 
-    python ubidump.py  -c /etc/passwd  image.ubi
+UBIFS dumper.
+
+positional arguments:
+  FILES                 list of ubi images to use
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --savedir DIRECTORY, -s DIRECTORY
+                        save files in all volumes to the specified directory
+  --preserve, -p        preserve permissions and timestamps
+  --cat FILE, -c FILE   extract a single file to stdout
+  --listfiles, -l       list directory contents
+  --dumptree, -d        dump the filesystem b-tree contents
+  --verbose, -v         print extra info
+  --debug               abort on exceptions
+  --encoding ENCODING, -e ENCODING
+                        filename encoding, default=utf-8
+  --masteroffset MASTEROFFSET, -m MASTEROFFSET
+                        Which master node to use.
+  --root ROOT, -R ROOT  Which Root node to use (hexlnum:hexoffset).
+  --rawdump             Raw hexdump of entire volume.
+  --volume VOLUME       which volume to hexdump
+  --hexdump LEB:OFF:N   hexdump part of a volume/leb[/ofs[/size]]
+  --nodedump LEB:OFF    dump specific node at volume/leb[/ofs]
+```
+
+Usage Examples
+--------------
+
+Print the contents of the `/etc/passwd` file in the filesystem image `image.ubi` to `STDOUT`:
+
+    python ubidump.py -c /etc/passwd  image.ubi
+
+Extract contents of the filesystem image `image.ubi` to directory `/tmp/foo`:
+
+    python ubidump.py -s /tmp/foo
 
 List the files in all the volumes in `image.ubi`:
 
-    python ubidump.py  -l  image.ubi
+    python ubidump.py -l image.ubi
 
 View the contents of b-tree database from the volumes in `image.ubi`:
 
-    python ubidump.py  -d  image.ubi
+    python ubidump.py -d image.ubi
+
 
 Extract an unsupported volume type, so you can analyze it with other tools:
 
