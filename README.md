@@ -29,9 +29,9 @@ mounting images on linux
 ------------------------
 
     modprobe nandsim first_id_byte=0x2c second_id_byte=0xac third_id_byte=0x90 fourth_id_byte=0x26
-    nandwrite /dev/mtd0   firmware-image.ubi 
+    nandwrite /dev/mtd0 firmware-image.ubi 
     modprobe ubi mtd=/dev/mtd0,4096
-    mount -t ubifs  -o ro /dev/ubi0_0 mnt
+    mount -t ubifs -o ro /dev/ubi0_0 mnt
 
 This will mount a ubi image for a device with eraseblock size 0x40000.
 If your image has a blocksize of 0x20000, use `fourth_id_byte=0x15`, and specify a pagesize of `2048`
@@ -42,19 +42,19 @@ Usage
 
 View the contents of the `/etc/passwd` file in the filesystem image `image.ubi`:
 
-    python ubidump.py  -c /etc/passwd  image.ubi
+    python ubidump.py -c /etc/passwd image.ubi
 
 List the files in all the volumes in `image.ubi`:
 
-    python ubidump.py  -l  image.ubi
+    python ubidump.py -l image.ubi
 
 View the contents of b-tree database from the volumes in `image.ubi`:
 
-    python ubidump.py  -d  image.ubi
+    python ubidump.py -d image.ubi
 
 Extract an unsupported volume type, so you can analyze it with other tools:
 
-    python ubidump.py  -v 0 --saveraw unknownvol.bin  image.ubi
+    python ubidump.py --volume 0 --saveraw unknownvol.bin image.ubi
 
 Note that often ubi images contain squashfs volumes, which can be extracted using tools like
 [unsquashfs](https://github.com/plougher/squashfs-tools) or [rdsquashfs](https://github.com/AgentD/squashfs-tools-ng)
